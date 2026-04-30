@@ -1,0 +1,89 @@
+name: Deploy → DEV
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      full_refresh:
+        description: "Run DLT pipeline with full refresh?"
+        required: false
+        default: "false"
+        type: boolean
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    name: Deploy to DEV
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Run unit tests
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -e .
+          pytest tests/unit/ -v --tb=short
+        env:
+          SPARK_LOCAL_IP: "127.0.0.1"
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Validate bundle
+        run: databricks bundle validate --target dev
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+
+      - name: Deploy bundle to DEV
+        run: databricks bundle deploy --target dev
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+
+      - name: Run catalog setup job
+        run: |
+          databricks bundle run catalog_setup_job --target dev
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+
+      - name: Run orchestration pipeline (smoke test)
+        run: |
+          databricks bundle run medallion_orchestration_job --target dev \
+            --python-named-params "run_date=$(date +%Y-%m-%d)"
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":red_circle: DEV deployment FAILED for ${{ github.repository }} — ${{ github.ref }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

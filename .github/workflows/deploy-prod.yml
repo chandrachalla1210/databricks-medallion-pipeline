@@ -1,0 +1,87 @@
+name: Deploy → PROD
+
+on:
+  release:
+    types: [published]   # Only deploy to PROD on a GitHub Release
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to deploy (e.g. v1.2.3)"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    name: Deploy to PROD
+    runs-on: ubuntu-latest
+    environment: prod   # REQUIRES manual approval in GitHub → Environments → prod
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+
+      - name: Set up Python & Java
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Run full test suite (mandatory gate)
+        run: |
+          pip install -r requirements-dev.txt && pip install -e .
+          pytest tests/ -v --cov=src --cov-fail-under=85
+        env:
+          SPARK_LOCAL_IP: "127.0.0.1"
+
+      - name: Install Databricks CLI
+        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Validate bundle (prod)
+        run: databricks bundle validate --target prod
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+
+      - name: Deploy to PROD
+        run: databricks bundle deploy --target prod
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+
+      - name: Run catalog setup
+        run: databricks bundle run catalog_setup_job --target prod
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+
+      - name: Notify Slack — deployment success
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: PROD deployment SUCCESS — ${{ github.event.release.tag_name || inputs.release_tag }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack — deployment failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":red_circle: PROD deployment FAILED — ${{ github.event.release.tag_name || inputs.release_tag }} — immediate attention required!"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

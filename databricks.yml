@@ -1,0 +1,126 @@
+bundle:
+  name: medallion_pipeline
+
+# ─── Global Variables (overridden per environment) ───────────────────────────
+variables:
+  env:
+    description: Deployment environment (dev | test | int | prod)
+    default: dev
+  catalog_name:
+    description: Unity Catalog name
+    default: dev_catalog
+  schema_prefix:
+    description: Schema prefix for medallion layers
+    default: medallion
+  source_system:
+    description: Source system identifier
+    default: ecommerce
+  pipeline_channel:
+    description: DLT channel (PREVIEW | CURRENT)
+    default: CURRENT
+  cluster_node_type:
+    description: Node type for clusters
+    default: i3.xlarge
+  min_workers:
+    description: Minimum autoscale workers
+    default: "1"
+  max_workers:
+    description: Maximum autoscale workers
+    default: "4"
+  notification_email:
+    description: Email for job alerts
+    default: data-team@company.com
+  volume_name:
+    description: Unity Catalog volume for raw data landing
+    default: raw_landing
+  log_level:
+    description: Log level for jobs
+    default: INFO
+
+# ─── Artifacts ────────────────────────────────────────────────────────────────
+artifacts:
+  default:
+    type: whl
+    build: pip wheel src/ -w dist/
+    path: dist/
+
+# ─── Workspace ────────────────────────────────────────────────────────────────
+workspace:
+  host: ${DATABRICKS_HOST}
+  root_path: /Shared/medallion_pipeline/${var.env}
+
+# ─── Include Resources ────────────────────────────────────────────────────────
+include:
+  - resources/pipelines/*.yml
+  - resources/jobs/*.yml
+  - resources/schemas/*.yml
+
+# ─── Target Environments ─────────────────────────────────────────────────────
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: ${DATABRICKS_HOST_DEV}
+    variables:
+      env: dev
+      catalog_name: dev_catalog
+      schema_prefix: medallion
+      source_system: ecommerce
+      pipeline_channel: PREVIEW
+      cluster_node_type: i3.xlarge
+      min_workers: "1"
+      max_workers: "2"
+      notification_email: dev-team@company.com
+      volume_name: raw_landing
+      log_level: DEBUG
+
+  test:
+    mode: development
+    workspace:
+      host: ${DATABRICKS_HOST_TEST}
+    variables:
+      env: test
+      catalog_name: test_catalog
+      schema_prefix: medallion
+      source_system: ecommerce
+      pipeline_channel: CURRENT
+      cluster_node_type: i3.xlarge
+      min_workers: "1"
+      max_workers: "3"
+      notification_email: test-team@company.com
+      volume_name: raw_landing
+      log_level: INFO
+
+  int:
+    workspace:
+      host: ${DATABRICKS_HOST_INT}
+    variables:
+      env: int
+      catalog_name: int_catalog
+      schema_prefix: medallion
+      source_system: ecommerce
+      pipeline_channel: CURRENT
+      cluster_node_type: i3.2xlarge
+      min_workers: "2"
+      max_workers: "4"
+      notification_email: int-team@company.com
+      volume_name: raw_landing
+      log_level: INFO
+
+  prod:
+    mode: production
+    workspace:
+      host: ${DATABRICKS_HOST_PROD}
+    variables:
+      env: prod
+      catalog_name: prod_catalog
+      schema_prefix: medallion
+      source_system: ecommerce
+      pipeline_channel: CURRENT
+      cluster_node_type: i3.2xlarge
+      min_workers: "4"
+      max_workers: "16"
+      notification_email: data-platform@company.com
+      volume_name: raw_landing
+      log_level: WARNING

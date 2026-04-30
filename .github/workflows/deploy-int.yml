@@ -1,0 +1,66 @@
+name: Deploy → INT
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_pipeline:
+        description: "Trigger orchestration job after deploy?"
+        default: "true"
+        type: boolean
+
+concurrency:
+  group: deploy-int
+  cancel-in-progress: false
+
+jobs:
+  deploy-int:
+    name: Deploy to INT
+    runs-on: ubuntu-latest
+    environment: int   # Requires manual approval in GitHub environment settings
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python & Java
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Run full test suite
+        run: |
+          pip install -r requirements-dev.txt && pip install -e .
+          pytest tests/ -v --cov=src --cov-fail-under=85
+        env:
+          SPARK_LOCAL_IP: "127.0.0.1"
+
+      - name: Install Databricks CLI
+        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Validate & Deploy to INT
+        run: |
+          databricks bundle validate --target int
+          databricks bundle deploy --target int
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_INT }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_INT }}
+
+      - name: Run catalog setup
+        run: databricks bundle run catalog_setup_job --target int
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_INT }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_INT }}
+
+      - name: Run pipeline (conditional)
+        if: ${{ inputs.run_pipeline == 'true' }}
+        run: |
+          databricks bundle run medallion_orchestration_job --target int \
+            --python-named-params "run_date=$(date +%Y-%m-%d)"
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_INT }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_INT }}

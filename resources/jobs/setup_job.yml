@@ -1,0 +1,42 @@
+resources:
+  jobs:
+    catalog_setup_job:
+      name: medallion_catalog_setup_${var.env}
+      description: "Creates Unity Catalog, schemas, and volumes for the medallion pipeline"
+
+      job_clusters:
+        - job_cluster_key: setup_cluster
+          new_cluster:
+            spark_version: 14.3.x-scala2.12
+            node_type_id: ${var.cluster_node_type}
+            num_workers: 1
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+            custom_tags:
+              env: ${var.env}
+              project: medallion_pipeline
+              layer: setup
+
+      tasks:
+        - task_key: create_catalog_schemas_volumes
+          job_cluster_key: setup_cluster
+          python_wheel_task:
+            package_name: medallion_pipeline
+            entry_point: setup_catalog
+            named_parameters:
+              env: ${var.env}
+              catalog_name: ${var.catalog_name}
+              schema_prefix: ${var.schema_prefix}
+              volume_name: ${var.volume_name}
+              source_system: ${var.source_system}
+              log_level: ${var.log_level}
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+        no_alert_for_skipped_runs: true
+
+      tags:
+        env: ${var.env}
+        project: medallion_pipeline
+        job_type: setup

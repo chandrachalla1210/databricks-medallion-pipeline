@@ -1,0 +1,114 @@
+name: CI — Unit Tests & Lint
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install linting dependencies
+        run: pip install ruff black isort mypy
+
+      - name: Run ruff (lint)
+        run: ruff check src/ tests/
+
+      - name: Run black (format check)
+        run: black --check src/ tests/
+
+      - name: Run isort (import order)
+        run: isort --check-only src/ tests/
+
+  unit-tests:
+    name: Unit Tests (PySpark local)
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Java (required by PySpark)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Install package in editable mode
+        run: pip install -e .
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit/ \
+            --cov=src \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-fail-under=80 \
+            -v \
+            --tb=short \
+            --junit-xml=test-results.xml
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          SPARK_LOCAL_IP: "127.0.0.1"
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: |
+            test-results.xml
+            htmlcov/
+
+  validate-bundle:
+    name: Validate DAB Bundle
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Validate bundle (dev target)
+        run: databricks bundle validate --target dev
+        env:
+          DATABRICKS_HOST_DEV: ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN:    ${{ secrets.DATABRICKS_TOKEN_DEV }}
+
+      - name: Summary
+        run: echo "✅ CI passed — bundle validated against dev workspace"

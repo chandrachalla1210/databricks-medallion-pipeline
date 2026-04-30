@@ -1,0 +1,120 @@
+# resources/jobs/medallion_job.yml
+resources:
+  jobs:
+    medallion_orchestration_job:
+      name: medallion_orchestration_${var.env}
+      description: "End-to-end medallion pipeline orchestration (${var.env})"
+
+      # ── Schedule ────────────────────────────────────────────────────
+      schedule:
+        quartz_cron_expression: ${var.job_schedule_quartz}
+        timezone_id: UTC
+        pause_status: ${var.env == 'prod' ? 'UNPAUSED' : 'PAUSED'}
+
+      # ── Shared job cluster ──────────────────────────────────────────
+      job_clusters:
+        - job_cluster_key: shared_cluster
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id:  ${var.node_type}
+            autoscale:
+              min_workers: ${var.min_workers}
+              max_workers: ${var.max_workers}
+            spark_conf:
+              spark.sql.shuffle.partitions: "auto"
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.databricks.delta.autoCompact.enabled:   "true"
+            spark_env_vars:
+              ENV:          ${var.env}
+              CATALOG_NAME: ${var.catalog_name}
+            custom_tags:
+              team:        data-engineering
+              environment: ${var.env}
+
+      # ── Tasks ───────────────────────────────────────────────────────
+      tasks:
+
+        # 1. Catalog / schema / volume bootstrap
+        - task_key: setup_catalog
+          description: Create catalog, schemas, and volumes if they don't exist
+          job_cluster_key: shared_cluster
+          notebook_task:
+            notebook_path: ./src/setup/catalog_setup.py
+            base_parameters:
+              catalog_name:   ${var.catalog_name}
+              env:            ${var.env}
+              bronze_schema:  bronze
+              silver_schema:  silver
+              gold_schema:    gold
+              landing_schema: landing
+          libraries:
+            - whl: ./dist/*.whl
+
+        # 2. Raw data ingestion into landing volume
+        - task_key: ingest_raw
+          description: Copy/validate raw source files into the landing volume
+          depends_on:
+            - task_key: setup_catalog
+          job_cluster_key: shared_cluster
+          notebook_task:
+            notebook_path: ./src/pipeline/bronze/ingest_raw.py
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              env:          ${var.env}
+              source_path:  ${var.source_path}
+          libraries:
+            - whl: ./dist/*.whl
+
+        # 3. Run the DLT pipeline (bronze → silver → gold)
+        - task_key: run_dlt_pipeline
+          description: Trigger the Delta Live Tables pipeline
+          depends_on:
+            - task_key: ingest_raw
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.medallion_dlt.id}
+            full_refresh: false
+
+        # 4. Data quality checks post-pipeline
+        - task_key: dq_checks
+          description: Run Great Expectations / custom DQ checks on gold layer
+          depends_on:
+            - task_key: run_dlt_pipeline
+          job_cluster_key: shared_cluster
+          notebook_task:
+            notebook_path: ./src/pipeline/gold/dq_checks.py
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              env:          ${var.env}
+          libraries:
+            - whl: ./dist/*.whl
+
+        # 5. Optimise gold tables
+        - task_key: optimize_gold
+          description: OPTIMIZE + ZORDER gold tables
+          depends_on:
+            - task_key: dq_checks
+          job_cluster_key: shared_cluster
+          notebook_task:
+            notebook_path: ./src/pipeline/gold/optimize.py
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              env:          ${var.env}
+          libraries:
+            - whl: ./dist/*.whl
+
+      # ── Notifications ────────────────────────────────────────────────
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+        on_success:
+          - ${var.notification_email}
+        no_alert_for_skipped_runs: true
+
+      # ── Retry & timeout ──────────────────────────────────────────────
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 6000

@@ -1,0 +1,68 @@
+name: Deploy → TEST
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-test
+  cancel-in-progress: false
+
+jobs:
+  deploy-test:
+    name: Deploy to TEST
+    runs-on: ubuntu-latest
+    environment: test
+    needs: []   # Can gate on dev deploy if desired
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Java & dependencies
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Run unit tests
+        run: |
+          pip install -r requirements-dev.txt && pip install -e .
+          pytest tests/unit/ -v --tb=short --cov=src --cov-fail-under=80
+        env:
+          SPARK_LOCAL_IP: "127.0.0.1"
+
+      - name: Install Databricks CLI
+        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Validate bundle (test)
+        run: databricks bundle validate --target test
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_TEST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_TEST }}
+
+      - name: Deploy to TEST
+        run: databricks bundle deploy --target test
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_TEST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_TEST }}
+
+      - name: Run catalog setup
+        run: databricks bundle run catalog_setup_job --target test
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_TEST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_TEST }}
+
+      - name: Run pipeline integration test
+        run: |
+          databricks bundle run medallion_orchestration_job --target test \
+            --python-named-params "run_date=$(date +%Y-%m-%d)"
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST_TEST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_TEST }}

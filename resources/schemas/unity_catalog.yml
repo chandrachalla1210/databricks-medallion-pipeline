@@ -1,0 +1,32 @@
+# Unity Catalog resources — DAB manages lifecycle of these objects
+resources:
+  schemas:
+    bronze_schema:
+      name: ${var.schema_prefix}_bronze
+      catalog_name: ${var.catalog_name}
+      comment: "Bronze layer — raw ingested data for ${var.source_system} in ${var.env}"
+      properties:
+        layer: bronze
+        env: ${var.env}
+        source_system: ${var.source_system}
+        managed_by: dab
+
+    silver_schema:
+      name: ${var.schema_prefix}_silver
+      catalog_name: ${var.catalog_name}
+      comment: "Silver layer — cleansed and conformed data for ${var.source_system} in ${var.env}"
+      properties:
+        layer: silver
+        env: ${var.env}
+        source_system: ${var.source_system}
+        managed_by: dab
+
+    gold_schema:
+      name: ${var.schema_prefix}_gold
+      catalog_name: ${var.catalog_name}
+      comment: "Gold layer — aggregated business-ready data for ${var.source_system} in ${var.env}"
+      properties:
+        layer: gold
+        env: ${var.env}
+        source_system: ${var.source_system}
+        managed_by: dab

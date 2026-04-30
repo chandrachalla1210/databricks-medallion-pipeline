@@ -1,0 +1,50 @@
+# resources/pipelines/medallion_pipeline.yml
+resources:
+  pipelines:
+    medallion_dlt:
+      name: medallion_pipeline_${var.env}
+      channel: ${var.pipeline_channel}
+      continuous: ${var.pipeline_continuous}
+      development: ${bundle.target == 'dev'}
+      photon: true
+
+      catalog: ${var.catalog_name}
+      target: dlt_schema          # schema inside the catalog where DLT publishes tables
+
+      configuration:
+        env:               ${var.env}
+        catalog_name:      ${var.catalog_name}
+        source_path:       ${var.source_path}
+        bronze_schema:     bronze
+        silver_schema:     silver
+        gold_schema:       gold
+
+      libraries:
+        - notebook:
+            path: ./src/dlt/bronze_pipeline.py
+        - notebook:
+            path: ./src/dlt/silver_pipeline.py
+        - notebook:
+            path: ./src/dlt/gold_pipeline.py
+        - whl: ./dist/*.whl        # packaged utilities
+
+      clusters:
+        - label: default
+          node_type_id:       ${var.node_type}
+          autoscale:
+            min_workers: ${var.min_workers}
+            max_workers: ${var.max_workers}
+          spark_conf:
+            spark.databricks.delta.preview.enabled: "true"
+            spark.sql.shuffle.partitions: "auto"
+          custom_tags:
+            team:        data-engineering
+            environment: ${var.env}
+            project:     medallion-pipeline
+
+      notifications:
+        - email_recipients:
+            - ${var.notification_email}
+          alerts:
+            - on_update_failure
+            - on_flow_failure

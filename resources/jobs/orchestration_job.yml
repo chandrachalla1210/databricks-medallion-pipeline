@@ -1,0 +1,110 @@
+resources:
+  jobs:
+    medallion_orchestration_job:
+      name: medallion_orchestration_${var.env}_${var.source_system}
+      description: "Orchestrates the full medallion pipeline: setup → DLT → data quality checks"
+
+      job_clusters:
+        - job_cluster_key: orchestration_cluster
+          new_cluster:
+            spark_version: 14.3.x-scala2.12
+            node_type_id: ${var.cluster_node_type}
+            autoscale:
+              min_workers: ${var.min_workers}
+              max_workers: ${var.max_workers}
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+            custom_tags:
+              env: ${var.env}
+              project: medallion_pipeline
+
+      parameters:
+        - name: env
+          default: ${var.env}
+        - name: catalog_name
+          default: ${var.catalog_name}
+        - name: schema_prefix
+          default: ${var.schema_prefix}
+        - name: source_system
+          default: ${var.source_system}
+        - name: run_date
+          default: "{{ds}}"         # Airflow-style date macro; override at runtime
+
+      tasks:
+        # ── Task 1: Validate source data ─────────────────────────────────────
+        - task_key: validate_source
+          job_cluster_key: orchestration_cluster
+          python_wheel_task:
+            package_name: medallion_pipeline
+            entry_point: validate_source
+            named_parameters:
+              env: "{{job.parameters.env}}"
+              catalog_name: "{{job.parameters.catalog_name}}"
+              schema_prefix: "{{job.parameters.schema_prefix}}"
+              source_system: "{{job.parameters.source_system}}"
+              run_date: "{{job.parameters.run_date}}"
+              log_level: ${var.log_level}
+
+        # ── Task 2: Run DLT Pipeline ─────────────────────────────────────────
+        - task_key: run_dlt_pipeline
+          depends_on:
+            - task_key: validate_source
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.medallion_dlt_pipeline.id}
+            full_refresh: false
+
+        # ── Task 3: Data Quality Checks ──────────────────────────────────────
+        - task_key: data_quality_checks
+          depends_on:
+            - task_key: run_dlt_pipeline
+          job_cluster_key: orchestration_cluster
+          python_wheel_task:
+            package_name: medallion_pipeline
+            entry_point: run_quality_checks
+            named_parameters:
+              env: "{{job.parameters.env}}"
+              catalog_name: "{{job.parameters.catalog_name}}"
+              schema_prefix: "{{job.parameters.schema_prefix}}"
+              source_system: "{{job.parameters.source_system}}"
+              run_date: "{{job.parameters.run_date}}"
+              log_level: ${var.log_level}
+
+        # ── Task 4: Notify on Success ─────────────────────────────────────────
+        - task_key: notify_success
+          depends_on:
+            - task_key: data_quality_checks
+          job_cluster_key: orchestration_cluster
+          python_wheel_task:
+            package_name: medallion_pipeline
+            entry_point: notify_pipeline_status
+            named_parameters:
+              env: "{{job.parameters.env}}"
+              status: success
+              notification_email: ${var.notification_email}
+
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"   # 06:00 UTC daily
+        timezone_id: UTC
+        pause_status: ${var.env == "prod" ? "UNPAUSED" : "PAUSED"}
+
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+        on_success:
+          - ${var.notification_email}
+        no_alert_for_skipped_runs: true
+
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 3600    # Alert if job takes > 1 hour
+
+      tags:
+        env: ${var.env}
+        project: medallion_pipeline
+        job_type: orchestration
+        source_system: ${var.source_system}

@@ -4,7 +4,7 @@ resources:
       name: medallion_pipeline_${var.env}_${var.source_system}
       channel: ${var.pipeline_channel}
       continuous: false
-      development: ${var.env == "dev" || var.env == "test"}
+      development: ${var.is_development}
       photon: true
       edition: ADVANCED
 
@@ -46,7 +46,7 @@ resources:
             layer: dlt
 
       notifications:
-        - recipients:
+        - email_recipients:
             - ${var.notification_email}
           alerts:
             - on-update-failure

@@ -5,7 +5,7 @@ resources:
       name: medallion_pipeline_${var.env}
       channel: ${var.pipeline_channel}
       continuous: ${var.pipeline_continuous}
-      development: ${bundle.target == 'dev'}
+      development: ${var.is_development}
       photon: true
 
       catalog: ${var.catalog_name}

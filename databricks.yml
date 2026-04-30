@@ -18,6 +18,9 @@ variables:
   pipeline_channel:
     description: DLT channel (PREVIEW | CURRENT)
     default: CURRENT
+  is_development:
+    description: Whether this is a development deployment
+    default: false
   cluster_node_type:
     description: Node type for clusters
     default: i3.xlarge
@@ -46,7 +49,7 @@ artifacts:
 
 # ─── Workspace ────────────────────────────────────────────────────────────────
 workspace:
-  host: ${DATABRICKS_HOST}
+
   root_path: /Shared/medallion_pipeline/${var.env}
 
 # ─── Include Resources ────────────────────────────────────────────────────────
@@ -61,13 +64,13 @@ targets:
     mode: development
     default: true
     workspace:
-      host: ${DATABRICKS_HOST_DEV}
     variables:
       env: dev
       catalog_name: dev_catalog
       schema_prefix: medallion
       source_system: ecommerce
       pipeline_channel: PREVIEW
+      is_development: true
       cluster_node_type: i3.xlarge
       min_workers: "1"
       max_workers: "2"
@@ -78,12 +81,12 @@ targets:
   test:
     mode: development
     workspace:
-      host: ${DATABRICKS_HOST_TEST}
     variables:
       env: test
       catalog_name: test_catalog
       schema_prefix: medallion
       source_system: ecommerce
+      is_development: true
       pipeline_channel: CURRENT
       cluster_node_type: i3.xlarge
       min_workers: "1"
@@ -94,7 +97,6 @@ targets:
 
   int:
     workspace:
-      host: ${DATABRICKS_HOST_INT}
     variables:
       env: int
       catalog_name: int_catalog
@@ -111,7 +113,6 @@ targets:
   prod:
     mode: production
     workspace:
-      host: ${DATABRICKS_HOST_PROD}
     variables:
       env: prod
       catalog_name: prod_catalog

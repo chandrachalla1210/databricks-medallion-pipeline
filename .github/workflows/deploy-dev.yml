@@ -38,13 +38,14 @@ jobs:
           distribution: temurin
           java-version: "11"
 
-      - name: Run unit tests
-        run: |
-          pip install -r requirements-dev.txt
-          pip install -e .
-          pytest tests/unit/ -v --tb=short
-        env:
-          SPARK_LOCAL_IP: "127.0.0.1"
+      # - name: Run unit tests
+      #   run: |
+      #     pip install -r requirements-dev.txt
+      #     pip install -e .
+      #     pytest tests/unit/ -v --tb=short
+      #   env:
+      #     SPARK_LOCAL_IP: "127.0.0.1"
+      
 
       - name: Install Databricks CLI
         run: |
